@@ -7,7 +7,7 @@ min_{u\in BV(\Omega)} 1/2 |Ku-y0|^2 + alpha TV(u,\Omega)
 
 where K is the control-to-state operator associated with a Poisson-type PDE.
 
-It uses the Dinkelbach-FCGCG approach described in the paper "Conditional gradient by graph cuts for total variation regularization with PDE constraints".
+It uses the Dinkelbach-FCGCG approach described in the paper "Conditional gradient for total variation regularization with PDE constraints: a graph cuts approach".
 
 Important libraries:
 
