@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Cristinelli"
+  given-names: "Giacomo"
+  orcid: "https://orcid.org/0009-0001-1554-6263"
+- family-names: "Iglesias"
+  given-names: "José A."
+  orcid: "https://orcid.org/0000-0002-7520-7802"
+- family-names: "Walter"
+  given-names: "Daniel"
+title: "Conditional gradient for total variation regularization with PDE constraints: a graph cuts approach"
+version: 0.1.0
+doi: 10.5281/zenodo.10048385
+date-released: 2023-10-27
+url: "https://doi.org/10.5281/zenodo.10048385"
