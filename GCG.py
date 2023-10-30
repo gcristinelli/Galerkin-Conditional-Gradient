@@ -386,6 +386,6 @@ if __name__ == '__main__':
     lz1, lz2 = eval(config.get('Control', 'Domain_z', fallback='[-1,1]'))
 
     max_iterations = eval(config.get('GCG', 'max_iterations', fallback='120'))
-    tolerance = eval(config.get('GCG', 'tolerance', fallback='1e-12'))
+    tolerance = eval(config.get('GCG', 'tolerance', fallback='1e-10'))
 
     _main_()
