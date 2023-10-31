@@ -9,7 +9,8 @@ $$min_{u\in BV(\Omega)} 1/2 |Ku-y_d|^2 + \alpha TV(u,\Omega)$$
 
 where K is the control-to-state operator associated with a Poisson-type PDE.
 
-It employs the method described in the paper "Conditional gradients for total variation regularization with PDE constraints: a graph cuts approach".
+It employs the method described in the paper "Conditional gradients for total variation regularization with PDE constraints: a graph cuts approach". 
+Preprint available at: https://arxiv.org/abs/2310.19777
 
 Important libraries:
 
