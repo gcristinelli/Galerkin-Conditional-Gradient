@@ -2,6 +2,7 @@ from dolfin import *
 from mshr import *
 import numpy as np
 import time
+from matplotlib import pyplot as pp
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -62,7 +63,7 @@ def _Dinkelbach(mesh, vol_face_fn, bdy_length_fn, intlengths, intcells, boundlen
     energy[n], integral_value[n], per[n] = _linear_problem(mesh, vol_face_fn, bdy_length_fn, intlengths, intcells,
                                                            boundlengths, boundfaces, graph, dual, coeff, n, cut_result)
     flog.write("    The initial cut took %.2f seconds, has value - %.10f\n" % (
-    (time.time() - prep_time), per[n] + coeff[n] * integral_value[n]))
+        (time.time() - prep_time), per[n] + coeff[n] * integral_value[n]))
 
     # if it is a zero cut, stop
     if per[n] < tolerance:
@@ -87,7 +88,7 @@ def _Dinkelbach(mesh, vol_face_fn, bdy_length_fn, intlengths, intcells, boundlen
                                                                boundlengths, boundfaces, graph, dual, coeff, n,
                                                                cut_result)
         flog.write("    Cut number %s has lambda equal to %s, took %.2f seconds, has value %.10f\n" % (
-        n, coeff[n], (time.time() - prev_time), per[n] + coeff[n] * integral_value[n]))
+            n, coeff[n], (time.time() - prev_time), per[n] + coeff[n] * integral_value[n]))
         if per[n] < tolerance:
             flog.write("    Dinkelbach stops after %s steps with lambda %.6e \n" % (n, coeff[n]))
             print("Dinkelbach stops after %s steps with lambda %.6e \n" % (n, coeff[n]))
@@ -242,7 +243,7 @@ def _symmetric_rectangle_mesh(x1, y1, Nm):
     return mesh_sym
 
 
-def _export_ply(mesh, intcells, fun, j, input, threshold, rd, flog):
+def _export_ply(mesh, intcells, fun, j, index, threshold, rd, flog):
     start_time = time.time()
     mesh.init(2, 0)
     f2v = mesh.topology()(2, 0)
@@ -256,8 +257,11 @@ def _export_ply(mesh, intcells, fun, j, input, threshold, rd, flog):
     header = "ply\nformat ascii 1.0\nelement vertex {}\nproperty float x\nproperty float y\nproperty float z\nelement " \
              "face {}\nproperty list uchar int vertex_indices\nproperty uchar red \nproperty uchar green \nproperty " \
              "uchar blue \n end_header\n"
-    if input:
+    if index == 0:
         f = open(rd + '/input.ply', "w")
+        f.write(header.format(3 * n, n))
+    elif index == 1:
+        f = open(rd + '/cut_%s.ply' % j, "w")
         f.write(header.format(3 * n, n))
     else:
         f = open(rd + '/U_%s.ply' % j, "w")
@@ -279,5 +283,18 @@ def _export_ply(mesh, intcells, fun, j, input, threshold, rd, flog):
 
     f.close()
     flog.write("  Creating the ply file took %.2f seconds \n" % (time.time() - start_time))
+
+
+def plot_result(mesh, int_cells, flog, rd, f, n, j, d):
+    if d == 2:
+        ax = plot(f)
+        pp.colorbar(ax, shrink=0.55, format='%01.3f')
+        if n == 0: pp.savefig(rd + '/input_Yo.png', bbox_inches='tight', dpi=600)
+        if n == 1: pp.savefig(rd + '/cut_%s.png' % j, bbox_inches='tight', dpi=600)
+        if n == 2: pp.savefig(rd + '/U_%s.png' % j, bbox_inches='tight', dpi=600)
+        if n == 3: pp.savefig(rd + '/P_%s.png' % j, bbox_inches='tight', dpi=600)
+        pp.close()
+    elif n != 3:
+        _export_ply(mesh, int_cells, f, j, n, 1 / 255, rd, flog)
 
 # ---------------------------------------------------------------------------------------------------------------------

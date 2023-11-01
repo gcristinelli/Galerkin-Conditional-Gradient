@@ -1,6 +1,6 @@
 
 __author__ = "Giacomo Cristinelli, José A. Iglesias and Daniel Walter"
-__date__ = "October 27th, 2023"
+__date__ = "November 1st, 2023"
 
 import argparse
 import configparser
@@ -15,7 +15,7 @@ from dolfin import *
 from matplotlib import pyplot as pp
 from mshr import *
 
-from GCG_operations import _sparsify, _Dinkelbach, _symmetric_rectangle_mesh, _export_ply, TV
+from GCG_operations import _sparsify, _Dinkelbach, _symmetric_rectangle_mesh, plot_result, TV
 from SSN import _SSN
 
 
@@ -182,18 +182,8 @@ def _main_():
     solve(Lap == u0, Y0, bdr, solver_parameters={'linear_solver': 'mumps'})
     measurements = Yd.vector().get_local()
 
-    if d == 2:
-        ax = plot(project(Yd, V))
-        pp.colorbar(ax, shrink=0.55, format='%01.3f')
-        pp.savefig(rd + '/input_Yd.png', bbox_inches='tight', dpi=600)
-        pp.close()
-        ax = plot(UD)
-        pp.colorbar(ax, shrink=0.55, format='%01.3f')
-        pp.savefig(rd + '/input_Ud.png', bbox_inches='tight', dpi=600)
-        pp.close()
-    else:
-        _export_ply(mesh, int_cells, project(Yd, V), 0, True, 1e-10, rd, flog)
-        _export_ply(mesh, int_cells, UD, "d", False, 1e-10, rd, flog)"""
+    plot_result(mesh, int_cells, flog, rd, project(Yd, V), 0, 0, d)
+    plot_result(mesh, int_cells, flog, rd, UD, 2, "o", d)"""
 
     # C2.---REFERENCE CONTROL AND OBSERVATIONS FOR CASTLE
     Lap = 1 * inner(grad(u), grad(v)) * dx
@@ -206,13 +196,7 @@ def _main_():
         Yd = interpolate(
             Expression('''x[0]>-0.5&&x[0]<0.5&&x[1]>-0.5&&x[1]<0.5&&x[2]>-0.5&&x[2]<0.5? 1.00001:0.0''', degree=0), V)
 
-    if d == 2:
-        ax = plot(Yd, vmin=0.0, vmax=1.00001)
-        pp.colorbar(ax, shrink=0.55, format='%01.3f')
-        pp.savefig(rd + '/input_Yd.png', bbox_inches='tight', dpi=600)
-        pp.close()
-    else:
-        _export_ply(mesh, int_cells, Yd, 0, True, 1e-10, rd, flog)
+    plot_result(mesh, int_cells, flog, rd, Yd, 0, 0, d)
 
     Yd = interpolate(Yd, VL)
 
@@ -293,6 +277,7 @@ def _main_():
             flog.write("  The new extremal coefficient is {} \n".format(extm))
             if perm < tolerance:
                 raise Exception("Zero cut at iteration %s" % j)
+            plot_result(mesh, int_cells, flog, rd, vm, 1, j, d)
             rhvk = (vm / perm) * v * dx
             Ul = np.append(Ul, np.reshape(vm.vector().get_local() / perm, (-1, 1)), axis=1)
 
@@ -325,17 +310,8 @@ def _main_():
         flog.write("  Current actual energy value is %.6e \n" % (energy[j]))
         print("Step %s of GCG finished with energy value %.6e and convergence indicator %.6e \n" % (j, optval, opt[j]))
 
-        if d == 2:
-            ax = plot(Uk)
-            pp.colorbar(ax, shrink=0.55, format='%01.3f')
-            pp.savefig(rd + '/U_%s.png' % j, bbox_inches='tight', dpi=600)
-            pp.close()
-            ax = plot(Pkp)
-            pp.colorbar(ax, shrink=0.55, format='%01.3f')
-            pp.savefig(rd + '/P_%s.png' % j, bbox_inches='tight', dpi=600)
-            pp.close()
-        else:
-            _export_ply(mesh, int_cells, Uk, j, False, 1 / 255, rd, flog)
+        plot_result(mesh, int_cells, flog, rd, Uk, 2, j, d)
+        plot_result(mesh, int_cells, flog, rd, Pkp, 3, j, d)
 
         total_time += time.time() - start_iteration_time
         export = [j, total_time, energy[j], opt[j], rel_change[j]]
