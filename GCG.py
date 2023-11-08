@@ -1,6 +1,6 @@
 
 __author__ = "Giacomo Cristinelli, José A. Iglesias and Daniel Walter"
-__date__ = "November 7st, 2023"
+__date__ = "November 1st, 2023"
 
 import argparse
 import configparser
@@ -75,10 +75,18 @@ def _main_():
 
     V = FunctionSpace(mesh, 'DG', 0)  # PWC
     VL = FunctionSpace(mesh, 'CG', 1)  # PWL
+    mesh.init()
     mesh.init(d - 1, d)
-    f2c = mesh.topology()(d - 1, d)
-    vol_cell_fn, bdy_length_fn = Function(V), Function(V)
+    e2f = mesh.topology()(d - 1, d)
+    vol_face_fn = Function(V)
+    bdy_length_fn = Function(V)
+    int_lengths = np.empty(0)
+    bdy_length = np.empty(0)
+    int_cells = np.empty(shape=[0, 2])
+    bdy_faces = np.empty(0)
+    internal_facets = np.empty(0)
     facet_size = np.empty(0)
+    bdy_facets = np.empty(0)
 
     if d == 2:
         flog.write("  Made a mesh with {} vertices, and {} faces \n".format(mesh.num_vertices(), mesh.num_faces()))
@@ -91,36 +99,43 @@ def _main_():
                                                                                               mesh.num_faces(),
                                                                                               mesh.num_cells(), d))
 
-    # Creating two array of indices of (d-1)-dimensional objects (boundary or internal)
-    facets_list = np.arange(mesh.num_facets())
-    internal_facets = np.array([facet for facet in facets_list if len(f2c(facet)) > 1], dtype=int)
-    bdy_facets = np.setdiff1d(facets_list, internal_facets)
-
-    # Doing the same for cells
-    cells_list = np.arange(mesh.num_facets())
-    bdy_cells = np.array([f2c(facet)[0] for facet in bdy_facets], dtype=int)
-    internal_cells = np.setdiff1d(cells_list, bdy_cells)
-    adjacency = np.array([[facet, f2c(facet)[0], f2c(facet)[1]] for facet in internal_facets], dtype=int)
-
-    # Computing size of facets and cells
-    if d == 2:
-        facet_size = np.array([Edge(mesh, edge).length() for edge in facets_list])
-    elif d == 3:
-        facet_size = np.array([Face(mesh, face).area() for face in facets_list])
-
-    int_lengths = np.array([facet_size[facet] for facet in internal_facets])
-    bdy_lengths = np.array([facet_size[facet] for facet in bdy_facets])
-
-    vol_cell_fn.vector()[:] = [Cell(mesh, cell).volume() for cell in range(mesh.num_cells())]
-
-    # B2.---GRAPH GENERATION, creating graph with (d-1)-facets areas/length as weights
+    # B2.---GRAPH GENERATION
     G = maxflow.GraphFloat()
     G.add_nodes(mesh.num_cells())
-    for facet in internal_facets: G.add_edge(f2c(facet)[0], f2c(facet)[1], facet_size[facet], facet_size[facet])
+
+    # Defining dimension dependent objects
+    if d == 2:
+        edges_list = np.arange(mesh.num_edges())
+        facet_size = np.array([Edge(mesh, edge).length() for edge in edges_list])
+        internal_facets = np.array([edge for edge in edges_list if len(e2f(edge)) > 1], dtype=int)
+        bdy_facets = np.setdiff1d(edges_list, internal_facets)
+    elif d == 3:
+        faces_list = np.arange(mesh.num_faces())
+        facet_size = np.array([Face(mesh, face).area() for face in faces_list])
+        internal_facets = np.array([face for face in faces_list if len(e2f(face)) > 1], dtype=int)
+        bdy_facets = np.setdiff1d(faces_list, internal_facets)
+
+    # Creating graph with (d-1)-facets areas/length as weights
+    for facet in internal_facets:
+        adj_cells = e2f(facet)
+        size = facet_size[facet]
+        G.add_edge(adj_cells[0], adj_cells[1], size, size)
+        int_cells = np.append(int_cells, np.reshape(adj_cells, (1, -1)), axis=0)
+        int_lengths = np.append(int_lengths, size)
+
+    int_cells = np.concatenate((internal_facets.reshape((-1, 1)), int_cells), axis=1)
+    # The first column gives the index of the facet, while the other two give the indices of the adjacent cells
+    vol_face_fn.vector()[:] = [Cell(mesh, cell).volume() for cell in range(mesh.num_cells())]
+    mid_cell = [Cell(mesh, cell).midpoint().array() for cell in range(0, mesh.num_cells())]
 
     # Process boundary info if needed
     if boundary:
-        for facet in bdy_facets: bdy_length_fn.vector()[f2c(facet)[0]] += facet_size[facet]
+        for facet in bdy_facets:
+            cell = e2f(facet)[0]
+            size = facet_size[facet]
+            bdy_length_fn.vector()[cell] += size
+            bdy_faces = np.append(bdy_faces, cell)
+            bdy_length = np.append(bdy_length, size)
 
     flog.write("  Constructed graph has {} nodes, and {} edges \n".format(G.get_node_count(), G.get_edge_count()))
     flog.write("  Making the mesh and graph took - %.2f seconds \n" % (time.time() - start_time))
@@ -157,7 +172,7 @@ def _main_():
     UD.vector()[:] = 2 * (np.linalg.norm(mid_cell + 0.33 * shift, axis=1) < sqrt(0.1)) + (
             np.linalg.norm(mid_cell + (-0.33) * shift, axis=1) < sqrt(0.15)) - 1
 
-    energy_D = alpha * TV(mesh, vol_cell_fn, bdy_length_fn, int_lengths, adjacency, bdy_lengths, bdy_cells, UD)
+    energy_D = alpha * TV(mesh, vol_face_fn, bdy_length_fn, int_lengths, int_cells, bdy_length, bdy_faces, UD)
 
     flog.write("Energy of the toy control is %.8e\n" % energy_D)
 
@@ -167,8 +182,8 @@ def _main_():
     solve(Lap == u0, Y0, bdr, solver_parameters={'linear_solver': 'mumps'})
     measurements = Yd.vector().get_local()
 
-    plot_result(mesh, adjacency, flog, rd, project(Yd, V), 0, 0, d)
-    plot_result(mesh, adjacency, flog, rd, UD, 2, "o", d)"""
+    plot_result(mesh, int_cells, flog, rd, project(Yd, V), 0, 0, d)
+    plot_result(mesh, int_cells, flog, rd, UD, 2, "o", d)"""
 
     # C2.---REFERENCE CONTROL AND OBSERVATIONS FOR CASTLE
     Lap = 1 * inner(grad(u), grad(v)) * dx
@@ -181,7 +196,7 @@ def _main_():
         Yd = interpolate(
             Expression('''x[0]>-0.5&&x[0]<0.5&&x[1]>-0.5&&x[1]<0.5&&x[2]>-0.5&&x[2]<0.5? 1.00001:0.0''', degree=0), V)
 
-    plot_result(mesh, adjacency, flog, rd, Yd, 0, 0, d)
+    plot_result(mesh, int_cells, flog, rd, Yd, 0, 0, d)
 
     Yd = interpolate(Yd, VL)
 
@@ -245,10 +260,10 @@ def _main_():
         flog.write("  Average of pk was %.6e \n" % assemble(Pkp * dx))
 
         if boundary:
-            vm, extm, perm = _Dinkelbach(mesh, vol_cell_fn, bdy_length_fn, int_lengths, adjacency, bdy_lengths,
-                                         bdy_cells, G, Pkp, 1, alpha, flog, j, tolerance=tolerance)
-            vp, extp, perp = _Dinkelbach(mesh, vol_cell_fn, bdy_length_fn, int_lengths, adjacency, bdy_lengths,
-                                         bdy_cells, G, Pkp, -1, alpha, flog, j, tolerance=tolerance)
+            vm, extm, perm = _Dinkelbach(mesh, vol_face_fn, bdy_length_fn, int_lengths, int_cells, bdy_length,
+                                         bdy_faces, G, Pkp, 1, alpha, flog, j, tolerance=tolerance)
+            vp, extp, perp = _Dinkelbach(mesh, vol_face_fn, bdy_length_fn, int_lengths, int_cells, bdy_length,
+                                         bdy_faces, G, Pkp, -1, alpha, flog, j, tolerance=tolerance)
             flog.write("  The new extremal coefficients are {}, {} \n".format(extm, extp))
             if np.abs(extp) > np.abs(extm):
                 rhvk = -(vp / perp) * v * dx
@@ -257,12 +272,12 @@ def _main_():
                 rhvk = (vm / perm) * v * dx
                 Ul = np.append(Ul, np.reshape(vm.vector().get_local() / perm, (-1, 1)), axis=1)
         else:
-            vm, extm, perm = _Dinkelbach(mesh, vol_cell_fn, bdy_length_fn, int_lengths, adjacency, bdy_lengths,
-                                         bdy_cells, G, Pkp, 1, alpha, flog, j, tolerance=tolerance)
+            vm, extm, perm = _Dinkelbach(mesh, vol_face_fn, bdy_length_fn, int_lengths, int_cells, bdy_length,
+                                         bdy_faces, G, Pkp, 1, alpha, flog, j, tolerance=tolerance)
             flog.write("  The new extremal coefficient is {} \n".format(extm))
             if perm < tolerance:
                 raise Exception("Zero cut at iteration %s" % j)
-            plot_result(mesh, adjacency, flog, rd, vm, 1, j, d)
+            plot_result(mesh, int_cells, flog, rd, vm, 1, j, d)
             rhvk = (vm / perm) * v * dx
             Ul = np.append(Ul, np.reshape(vm.vector().get_local() / perm, (-1, 1)), axis=1)
 
@@ -276,8 +291,8 @@ def _main_():
         Ul, Kl, coefficients = _sparsify(Ul, Kl, coefficients)
         Uk = Function(V)
         Uk.vector()[:] = mean.flatten() * U0_arr + Ul @ coefficients
-        energy[j] = misfit + alpha * TV(mesh, vol_cell_fn, bdy_length_fn, int_lengths, adjacency, bdy_lengths,
-                                        bdy_cells, Uk)
+        energy[j] = misfit + alpha * TV(mesh, vol_face_fn, bdy_length_fn, int_lengths, int_cells, bdy_length,
+                                        bdy_faces, Uk)
         rel_change[j] = assemble(abs(Uk - prev_Uk) * dx)/assemble(abs(Uk) * dx)
 
         pp.plot(range(len(np.trim_zeros(opt))), np.log10(np.trim_zeros(opt)))
@@ -295,8 +310,8 @@ def _main_():
         flog.write("  Current actual energy value is %.6e \n" % (energy[j]))
         print("Step %s of GCG finished with energy value %.6e and convergence indicator %.6e \n" % (j, optval, opt[j]))
 
-        plot_result(mesh, adjacency, flog, rd, Uk, 2, j, d)
-        plot_result(mesh, adjacency, flog, rd, Pkp, 3, j, d)
+        plot_result(mesh, int_cells, flog, rd, Uk, 2, j, d)
+        plot_result(mesh, int_cells, flog, rd, Pkp, 3, j, d)
 
         total_time += time.time() - start_iteration_time
         export = [j, total_time, energy[j], opt[j], rel_change[j]]
