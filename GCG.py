@@ -98,44 +98,33 @@ def _main_():
             "  Made a mesh with {} vertices, {} faces, and {} {}-dimensional cells \n".format(mesh.num_vertices(),
                                                                                               mesh.num_faces(),
                                                                                               mesh.num_cells(), d))
+    # dividing into boundary or internal facets
+    facets_list = np.arange(mesh.num_facets())
+    bdy_facets = np.array([facet for facet in facets_list if len(e2f(facet)) == 1], dtype=int)
+    internal_facets = np.setdiff1d(facets_list, bdy_facets)
 
-    # B2.---GRAPH GENERATION
-    G = maxflow.GraphFloat()
-    G.add_nodes(mesh.num_cells())
-
-    # Defining dimension dependent objects
+    # Defining dimension dependent size of facets
     if d == 2:
-        edges_list = np.arange(mesh.num_edges())
-        facet_size = np.array([Edge(mesh, edge).length() for edge in edges_list])
-        internal_facets = np.array([edge for edge in edges_list if len(e2f(edge)) > 1], dtype=int)
-        bdy_facets = np.setdiff1d(edges_list, internal_facets)
+        facet_size = np.array([Edge(mesh, edge).length() for edge in facets_list])
     elif d == 3:
-        faces_list = np.arange(mesh.num_faces())
-        facet_size = np.array([Face(mesh, face).area() for face in faces_list])
-        internal_facets = np.array([face for face in faces_list if len(e2f(face)) > 1], dtype=int)
-        bdy_facets = np.setdiff1d(faces_list, internal_facets)
+        facet_size = np.array([Face(mesh, face).area() for face in facets_list])
 
-    # Creating graph with (d-1)-facets areas/length as weights
-    for facet in internal_facets:
-        adj_cells = e2f(facet)
-        size = facet_size[facet]
-        G.add_edge(adj_cells[0], adj_cells[1], size, size)
-        int_cells = np.append(int_cells, np.reshape(adj_cells, (1, -1)), axis=0)
-        int_lengths = np.append(int_lengths, size)
-
-    int_cells = np.concatenate((internal_facets.reshape((-1, 1)), int_cells), axis=1)
-    # The first column gives the index of the facet, while the other two give the indices of the adjacent cells
+    int_cells = np.array([[facet, e2f(facet)[0], e2f(facet)[1]] for facet in internal_facets], dtype=int)
+    int_lengths = facet_size[internal_facets]
     vol_face_fn.vector()[:] = [Cell(mesh, cell).volume() for cell in range(mesh.num_cells())]
     mid_cell = [Cell(mesh, cell).midpoint().array() for cell in range(0, mesh.num_cells())]
 
     # Process boundary info if needed
     if boundary:
         for facet in bdy_facets:
-            cell = e2f(facet)[0]
-            size = facet_size[facet]
-            bdy_length_fn.vector()[cell] += size
-            bdy_faces = np.append(bdy_faces, cell)
-            bdy_length = np.append(bdy_length, size)
+            bdy_length_fn.vector()[e2f(facet)[0]] += facet_size[facet]
+            bdy_faces = np.append(bdy_faces, e2f(facet)[0])
+            bdy_length = np.append(bdy_length, facet_size[facet])
+
+    # B2.---GRAPH GENERATION, creating graph with (d-1)-facets areas/length as weights
+    G = maxflow.GraphFloat()
+    G.add_nodes(mesh.num_cells())
+    G.add_edges(int_cells[:, 1], int_cells[:, 2], facet_size[int_cells[:, 0]], facet_size[int_cells[:, 0]])
 
     flog.write("  Constructed graph has {} nodes, and {} edges \n".format(G.get_node_count(), G.get_edge_count()))
     flog.write("  Making the mesh and graph took - %.2f seconds \n" % (time.time() - start_time))
