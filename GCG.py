@@ -13,9 +13,11 @@ import os
 import scipy.sparse as cp
 from dolfin import *
 from matplotlib import pyplot as pp
-from mshr import *
 
-from GCG_operations import _sparsify, _Dinkelbach, _symmetric_rectangle_mesh, plot_result, TV
+from GCG_operations import _sparsify, TV
+from mesh import _create_mesh
+from insertion import _Dinkelbach
+from plots import plot_result, plot_convergence, plot_energy
 from SSN import _SSN
 
 
@@ -36,26 +38,12 @@ def _main_():
     start_time = time.time()
 
     # A1.---STORING INFO IN THE LOG FILE
-    flog.write("Variables:\n")
+    with open('setup.conf', 'r') as conf_file:
+        # Read the contents of the conf file
+        conf_content = conf_file.read()
 
-    if Random_mesh and d == 2:
-        flog.write("  Random mesh in a rectangle of size {}x{}, with indicator {}\n".format(lx2 - lx1, ly2 - ly1, N))
-    elif Random_mesh and d == 3:
-        flog.write(
-            "  Random mesh in a cube of size {}x{}x{}, with indicator {}\n".format(lx2 - lx1, ly2 - ly1, lz2 - lz1, N2))
-    elif not Random_mesh and d == 2:
-        flog.write("  Standard crossed mesh with {}x{} squares in a rectangle of size {}x{}\n".format(Nx, Ny, lx2 - lx1,
-                                                                                                      ly2 - ly1))
-    elif not Random_mesh and d == 3:
-        flog.write("  Regular Box mesh with {}x{}x{} cubes in a cube of size {}x{}x{}\n".format(Nx, Ny, Nz, lx2 - lx1,
-                                                                                                ly2 - ly1, lz2 - lz1))
-    else:
-        raise Exception("Not supported dimension. Choose d=2,3")
-
-    flog.write("  The dimension is {}\n".format(d))
-    flog.write("  The regularizer parameter is {}\n".format(alpha))
-    flog.write("  TV with boundary: {}.\n".format(boundary))
-    flog.write("  GCG has tolerance {}, and {} max iterations.\n".format(tolerance, max_iterations))
+    # Open a text file for writing
+    flog.write(conf_content + '\n')
 
     # ---GEOMETRY LOOP ------------------------------------------------------------------------------------------------
 
@@ -63,15 +51,7 @@ def _main_():
     print("Starting geometry loop...\n")
 
     # B1.---MESH GENERATION AND FUNCTION SPACES
-    if Random_mesh and d == 2:
-        mesh = _symmetric_rectangle_mesh(lx2, ly2, N)
-    elif Random_mesh and d == 3:
-        domain = Box(Point(lx1, ly1, lz1), Point(lx2, ly2, lz2))
-        mesh = generate_mesh(domain, N2)
-    elif not Random_mesh and d == 2:
-        mesh = RectangleMesh(Point(lx1, ly1), Point(lx2, ly2), Nx, Ny, 'crossed')
-    else:
-        mesh = BoxMesh(Point(lx1, ly1, lz1), Point(lx2, ly2, lz2), Nx, Ny, Nz)
+    mesh = _create_mesh(Random_mesh, d, lx1, lx2, ly1, ly2, lz1, lz2, Nx, Ny, Nz, N, N2, rd)
 
     V = FunctionSpace(mesh, 'DG', 0)  # PWC
     VL = FunctionSpace(mesh, 'CG', 1)  # PWL
@@ -80,13 +60,9 @@ def _main_():
     e2f = mesh.topology()(d - 1, d)
     vol_face_fn = Function(V)
     bdy_length_fn = Function(V)
-    int_lengths = np.empty(0)
     bdy_length = np.empty(0)
-    int_cells = np.empty(shape=[0, 2])
     bdy_faces = np.empty(0)
-    internal_facets = np.empty(0)
     facet_size = np.empty(0)
-    bdy_facets = np.empty(0)
 
     if d == 2:
         flog.write("  Made a mesh with {} vertices, and {} faces \n".format(mesh.num_vertices(), mesh.num_faces()))
@@ -121,6 +97,10 @@ def _main_():
             bdy_faces = np.append(bdy_faces, e2f(facet)[0])
             bdy_length = np.append(bdy_length, facet_size[facet])
 
+    # defining integrating measures
+    domains = MeshFunction("size_t", mesh, mesh.topology().dim(), 0)
+    dx = Measure("dx", domain=mesh, subdomain_data=domains)
+
     # B2.---GRAPH GENERATION, creating graph with (d-1)-facets areas/length as weights
     G = maxflow.GraphFloat()
     G.add_nodes(mesh.num_cells())
@@ -139,6 +119,7 @@ def _main_():
     bdr = DirichletBC(VL, g, DomainBoundary())
     v = TestFunction(VL)
     u = TrialFunction(VL)
+
     mass_form = v * u * dx
     M = assemble(mass_form)
     mat = as_backend_type(M).mat()
@@ -204,32 +185,30 @@ def _main_():
 
     # D1.---WARM UP ITERATION
     coefficients, mean, adjoint, optval, misfit = _SSN(Kl, Km, coefficients, mean, measurements, alpha, M)
-    flog.write("Warm up iteration:\n")
-    flog.write("  The mean is {} \n".format(mean))
-    flog.write("  The coefficients are {} \n".format(coefficients))
-    flog.write("  The adjoint is {}\n".format(adjoint))
-    flog.write("  Current value is %.6e \n" % optval)
-
     j = 0
     Uk = Function(V)
-    prev_Uk = Function(V)
     Uk.vector()[:] = mean.flatten() * U0_arr + Ul @ coefficients
+
     opt = np.zeros(max_iterations + 1)
     energy = np.zeros(max_iterations + 1)
     rel_change = np.zeros(max_iterations + 1)
     data = []
     total_time = 0
 
+    energy[0] = 0.5 * assemble((Y0 - Yd) ** 2 * dx)
+    export = [0, total_time, energy[0], optval/alpha, 0]
+    data.append(export)
+
     # D2.---MAIN LOOP
     while (j == 0) or (j <= max_iterations and opt[j - 1] > tolerance):
         start_iteration_time = time.time()
         flog.write("Iteration {} of Conditional gradient: \n".format(j))
         print("Starting iteration %s of GCG\n" % j)
+
         # Solve state and adjoint equation
         rhk = Uk * v * dx
         Yk = Function(VL)
         Vk = Function(VL)
-        Vkc = Function(VL)
         prev_time = time.time()
         prev_Uk = Uk
         solve(Lap == rhk, Yk, bdr, solver_parameters={'linear_solver': 'mumps'})
@@ -241,7 +220,7 @@ def _main_():
         flog.write("  Second PDE solve took %.2f seconds \n" % (time.time() - prev_time))
 
         # making sure pk has zero average
-        Pkp = project(Pk, V)
+        Pkp = interpolate(Pk, V)
         intergral_pk = assemble(Pkp * dx)
         volume_domain = assemble(interpolate(Constant(1.0), V) * dx)
         Pkv = np.subtract(Pkp.vector(), intergral_pk / volume_domain)
@@ -284,17 +263,9 @@ def _main_():
                                         bdy_faces, Uk)
         rel_change[j] = assemble(abs(Uk - prev_Uk) * dx)/assemble(abs(Uk) * dx)
 
-        pp.plot(range(len(np.trim_zeros(opt))), np.log10(np.trim_zeros(opt)))
-        pp.xlabel("iteration")
-        pp.ylabel("convergence indicator")
-        pp.savefig(rd + '/indicator.png', dpi=300)
-        pp.close()
-        pp.plot(range(len(np.trim_zeros(energy))), np.trim_zeros(energy))
-        pp.xlabel("iteration")
-        pp.ylabel("energy")
-        # pp.ylim([0, 0.001])
-        pp.savefig(rd + '/energy.png', dpi=300)
-        pp.close()
+        plot_convergence(rd, opt)
+        plot_energy(rd, energy)
+
         flog.write("  Current surrogate energy value is %.6e, with convergence indicator, %.6e \n" % (optval, opt[j]))
         flog.write("  Current actual energy value is %.6e \n" % (energy[j]))
         print("Step %s of GCG finished with energy value %.6e and convergence indicator %.6e \n" % (j, optval, opt[j]))
@@ -303,7 +274,7 @@ def _main_():
         plot_result(mesh, int_cells, flog, rd, Pkp, 3, j, d)
 
         total_time += time.time() - start_iteration_time
-        export = [j, total_time, energy[j], opt[j], rel_change[j]]
+        export = [j+1, total_time, energy[j], opt[j], rel_change[j]]
         data.append(export)
         j += 1
 
