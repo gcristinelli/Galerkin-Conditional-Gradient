@@ -150,7 +150,6 @@ def _main_():
 
     solve(Lap == ud, Yd, bdr, solver_parameters={'linear_solver': 'mumps'})
     solve(Lap == u0, Y0, bdr, solver_parameters={'linear_solver': 'mumps'})
-    measurements = Yd.vector().get_local()
 
     plot_result(mesh, int_cells, flog, rd, project(Yd, V), 0, 0, d)
     plot_result(mesh, int_cells, flog, rd, UD, 2, "o", d)"""
@@ -159,7 +158,6 @@ def _main_():
     Lap = 1 * inner(grad(u), grad(v)) * dx
     U0 = interpolate(Constant(1.0), V)
     u0 = U0 * v * dx
-    U0_arr = U0.vector().get_local()
     if d == 2:
         Yd = interpolate(Expression('''x[0]>-0.5&&x[0]<0.5&&x[1]>-0.5&&x[1]<0.5? 1.00001:0.0''', degree=0), V)
     else:
@@ -172,9 +170,11 @@ def _main_():
 
     Y0 = Function(VL)
     solve(Lap == u0, Y0, bdr, solver_parameters={'linear_solver': 'mumps'})
-    measurements = Yd.vector().get_local()
 
     # C3.---COEFFICIENTS, EXTREMALS, STATES
+    measurements = Yd.vector().get_local()
+    U0_arr = U0.vector().get_local()
+    Y0_arr = Y0.vector().get_local()
     Km = np.reshape(Y0.vector().get_local(), (-1, 1))
     Kl = np.empty(shape=[len(Km), 0])
     mean = np.array([1])
@@ -187,7 +187,12 @@ def _main_():
     coefficients, mean, adjoint, optval, misfit = _SSN(Kl, Km, coefficients, mean, measurements, alpha, M)
     j = 0
     Uk = Function(V)
+    prev_Uk = Function(V)
+    Yk = Function(VL)
+    Vk = Function(VL)
+    Pk = Function(VL)
     Uk.vector()[:] = mean.flatten() * U0_arr + Ul @ coefficients
+    Yk.vector()[:] = mean.flatten() * Y0_arr + Kl @ coefficients
 
     opt = np.zeros(max_iterations + 1)
     energy = np.zeros(max_iterations + 1)
@@ -205,19 +210,13 @@ def _main_():
         flog.write("Iteration {} of Conditional gradient: \n".format(j))
         print("Starting iteration %s of GCG\n" % j)
 
-        # Solve state and adjoint equation
-        rhk = Uk * v * dx
-        Yk = Function(VL)
-        Vk = Function(VL)
-        prev_time = time.time()
-        prev_Uk = Uk
-        solve(Lap == rhk, Yk, bdr, solver_parameters={'linear_solver': 'mumps'})
-        flog.write("  First PDE solve took %.2f seconds \n" % (time.time() - prev_time))
-        Pk = Function(VL)
+        prev_Uk.assign(Uk)
+
+        # Solve adjoint equation
         rhpk = (Yk - Yd) * v * dx
         prev_time = time.time()
         solve(Lap == rhpk, Pk, bdr, solver_parameters={'linear_solver': 'mumps'})
-        flog.write("  Second PDE solve took %.2f seconds \n" % (time.time() - prev_time))
+        flog.write("  Adjoint PDE solve took %.2f seconds \n" % (time.time() - prev_time))
 
         # making sure pk has zero average
         Pkp = interpolate(Pk, V)
@@ -251,14 +250,21 @@ def _main_():
 
         prev_time = time.time()
         solve(Lap == rhvk, Vk, bdr, solver_parameters={'linear_solver': 'mumps'})
-        flog.write("  Last PDE solve took %.2f seconds\n" % (time.time() - prev_time))
+        flog.write("  new state PDE solve took %.2f seconds\n" % (time.time() - prev_time))
+
         Kl = np.append(Kl, np.reshape(Vk.vector().get_local(), (-1, 1)), axis=1)
         coefficients = np.append(coefficients, np.array([1]))
+
+        # Updating coefficients with a semismooth Newton method
         coefficients, mean, adjoint, optval, misfit = _SSN(Kl, Km, coefficients, mean, measurements, alpha, M)
+
         opt[j] = ((np.abs(extm) - alpha) / alpha) * optval
         Ul, Kl, coefficients = _sparsify(Ul, Kl, coefficients)
-        Uk = Function(V)
+        
+        # Updating control and state
         Uk.vector()[:] = mean.flatten() * U0_arr + Ul @ coefficients
+        Yk.vector()[:] = mean.flatten() * Y0_arr + Kl @ coefficients
+
         energy[j] = misfit + alpha * TV(mesh, vol_face_fn, bdy_length_fn, int_lengths, int_cells, bdy_length,
                                         bdy_faces, Uk)
         rel_change[j] = assemble(abs(Uk - prev_Uk) * dx)/assemble(abs(Uk) * dx)
