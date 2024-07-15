@@ -151,7 +151,7 @@ def _main_():
     solve(Lap == ud, Yd, bdr, solver_parameters={'linear_solver': 'mumps'})
     solve(Lap == u0, Y0, bdr, solver_parameters={'linear_solver': 'mumps'})
 
-    plot_result(mesh, int_cells, flog, rd, project(Yd, V), 0, 0, d)
+    plot_result(mesh, int_cells, flog, rd, Yd, 0, 0, d)
     plot_result(mesh, int_cells, flog, rd, UD, 2, "o", d)"""
 
     # C2.---REFERENCE CONTROL AND OBSERVATIONS FOR CASTLE
