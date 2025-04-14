@@ -3,6 +3,7 @@ from mshr import *
 import numpy as np
 import time
 
+
 def _create_mesh(Random_mesh, d, lx1, lx2, ly1, ly2, lz1, lz2, Nx, Ny, Nz, N, N2, rd):
     if Random_mesh and d == 2:
         mesh = _symmetric_rectangle_mesh(lx2, ly2, N)
@@ -14,6 +15,8 @@ def _create_mesh(Random_mesh, d, lx1, lx2, ly1, ly2, lz1, lz2, Nx, Ny, Nz, N, N2
         mesh = RectangleMesh(Point(lx1, ly1), Point(lx2, ly2), Nx, Ny, 'crossed')
     else:
         mesh = BoxMesh(Point(lx1, ly1, lz1), Point(lx2, ly2, lz2), Nx, Ny, Nz)
+    with XDMFFile(rd + "/mesh.xdmf") as xdmf:
+        xdmf.write(mesh)
     return mesh
 
 def _symmetric_rectangle_mesh(x1, y1, Nm):
