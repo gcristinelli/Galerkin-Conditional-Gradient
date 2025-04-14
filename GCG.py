@@ -199,9 +199,10 @@ def _main_():
     rel_change = np.zeros(max_iterations + 1)
     data = []
     total_time = 0
+    itep = 0
 
     energy[0] = 0.5 * assemble((Y0 - Yd) ** 2 * dx)
-    export = [0, total_time, energy[0], optval/alpha, 0]
+    export = [j, total_time, energy[j], optval/alpha, 0, 0]
     data.append(export)
 
     # D2.---MAIN LOOP
@@ -227,9 +228,9 @@ def _main_():
         flog.write("  Average of pk was %.6e \n" % assemble(Pkp * dx))
 
         if boundary:
-            vm, extm, perm = _Dinkelbach(mesh, vol_face_fn, bdy_length_fn, int_lengths, int_cells, bdy_length,
+            vm, extm, perm, ite = _Dinkelbach(mesh, vol_face_fn, bdy_length_fn, int_lengths, int_cells, bdy_length,
                                          bdy_faces, G, Pkp, 1, alpha, flog, j, tolerance=tolerance)
-            vp, extp, perp = _Dinkelbach(mesh, vol_face_fn, bdy_length_fn, int_lengths, int_cells, bdy_length,
+            vp, extp, perp, itep = _Dinkelbach(mesh, vol_face_fn, bdy_length_fn, int_lengths, int_cells, bdy_length,
                                          bdy_faces, G, Pkp, -1, alpha, flog, j, tolerance=tolerance)
             flog.write("  The new extremal coefficients are {}, {} \n".format(extm, extp))
             if np.abs(extp) > np.abs(extm):
@@ -239,10 +240,16 @@ def _main_():
                 rhvk = (vm / perm) * v * dx
                 Ul = np.append(Ul, np.reshape(vm.vector().get_local() / perm, (-1, 1)), axis=1)
         else:
-            vm, extm, perm = _Dinkelbach(mesh, vol_face_fn, bdy_length_fn, int_lengths, int_cells, bdy_length,
+            vm, extm, perm, ite = _Dinkelbach(mesh, vol_face_fn, bdy_length_fn, int_lengths, int_cells, bdy_length,
                                          bdy_faces, G, Pkp, 1, alpha, flog, j, tolerance=tolerance)
             flog.write("  The new extremal coefficient is {} \n".format(extm))
             if perm < tolerance:
+                data_array = np.array(data, dtype=float)
+                energy_change = data_array[:, 2] - data_array[-1, 2]
+                data_array = np.hstack((data_array, energy_change[:, np.newaxis]))
+                fmt = ['%d', '%.2f', '%.10f', '%.10e', '%.10e', '%d', '%.10e']
+                header = 'iteration, time (seconds), energy, indicator, L1-relative change, num cuts, energy difference'
+                np.savetxt(rd + '/output.csv', data_array, delimiter=',', fmt=fmt, header=header)
                 raise Exception("Zero cut at iteration %s" % j)
             plot_result(mesh, int_cells, flog, rd, vm, 1, j, d)
             rhvk = (vm / perm) * v * dx
@@ -280,15 +287,15 @@ def _main_():
         plot_result(mesh, int_cells, flog, rd, Pkp, 3, j, d)
 
         total_time += time.time() - start_iteration_time
-        export = [j+1, total_time, energy[j], opt[j], rel_change[j]]
+        export = [j+1, total_time, energy[j], opt[j], rel_change[j], ite + itep]
         data.append(export)
         j += 1
 
     data_array = np.array(data, dtype=float)
     energy_change = data_array[:, 2] - data_array[-1, 2]
     data_array = np.hstack((data_array, energy_change[:, np.newaxis]))
-    fmt = ['%d', '%.2f', '%.6e', '%.6e', '%.6e', '%.6e']
-    header = 'iteration, time (seconds), energy, indicator, L1-relative change, energy difference'
+    fmt = ['%d', '%.2f', '%.10f', '%.10e', '%.10e', '%d', '%.10e']
+    header = 'iteration, time (seconds), energy, indicator, L1-relative change, num cuts, energy difference'
     np.savetxt(rd + '/output.csv', data_array, delimiter=',', fmt=fmt, header=header)
 
     print("Algorithm converged in %s steps, the total time was %.2f seconds" % (j - 1, time.time() - start_time))
